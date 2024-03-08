@@ -9,6 +9,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model
 
 
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 # -*- coding: utf-8 -*-
 """Finetune-opt-bnb-peft.ipynb
 
@@ -42,7 +44,7 @@ n_gpus = torch.cuda.device_count()
 max_memory = {i: max_memory for i in range(n_gpus)}
 
 model = AutoModelForCausalLM.from_pretrained(
-    "facebook/opt-350m",
+    "meta-llama/Llama-2-7b-hf",
     max_memory=max_memory,
     quantization_config=BitsAndBytesConfig(
         load_in_4bit=True,
@@ -55,14 +57,31 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16,
 )
 
-tokenizer = AutoTokenizer.from_pretrained("facebook/opt-350m")
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+
+# Before finetuning, let's check how the model answers a prompt
+print("Before fine-tuning: ")
+batch = tokenizer("Two things are infinite: ", return_tensors="pt").to("cuda")
+
+# model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
+model.eval()
+with torch.cuda.amp.autocast():
+    output_tokens = model.generate(**batch, max_new_tokens=50)
+
+print("\n\n", tokenizer.decode(output_tokens[0], skip_special_tokens=True))
 
 """### Post-processing on the model
 
 Finally, we need to apply some post-processing on the 8-bit model to enable training, let's freeze all our layers, and cast the layer-norm in `float32` for stability. We also cast the output of the last layer in `float32` for the same reasons.
 """
-
+model2 = AutoModelForCausalLM.from_pretrained("facebook/opt-350m")
 print(model)
+print(model2)
+
+import pdb
+
+pdb.set_trace()
 
 for param in model.parameters():
     param.requires_grad = False  # freeze the model - train adapters later
@@ -83,7 +102,8 @@ model.lm_head = CastOutputToFloat(model.lm_head)
 
 """### Apply LoRA
 
-Here comes the magic with `peft`! Let's load a `PeftModel` and specify that we are going to use low-rank adapters (LoRA) using `get_peft_model` utility function from `peft`.
+Here comes the magic with `peft`! Let's load a `PeftModel` and specify that we are going to use low-rank adapters (LoRA)
+using `get_peft_model` utility function from `peft`.
 """
 
 
@@ -102,10 +122,37 @@ def print_trainable_parameters(model):
     )
 
 
+# LlamaForCausalLM(
+#   (model): LlamaModel(
+#     (embed_tokens): Embedding(32000, 4096, padding_idx=0)
+#     (layers): ModuleList(
+#       (0-31): 32 x LlamaDecoderLayer(
+#         (self_attn): LlamaAttention(
+#           (q_proj): Linear4bit(in_features=4096, out_features=4096, bias=False)
+#           (k_proj): Linear4bit(in_features=4096, out_features=4096, bias=False)
+#           (v_proj): Linear4bit(in_features=4096, out_features=4096, bias=False)
+#           (o_proj): Linear4bit(in_features=4096, out_features=4096, bias=False)
+#           (rotary_emb): LlamaRotaryEmbedding()
+#         )
+#         (mlp): LlamaMLP(
+#           (gate_proj): Linear4bit(in_features=4096, out_features=11008, bias=False)
+#           (up_proj): Linear4bit(in_features=4096, out_features=11008, bias=False)
+#           (down_proj): Linear4bit(in_features=11008, out_features=4096, bias=False)
+#           (act_fn): SiLUActivation()
+#         )
+#         (input_layernorm): LlamaRMSNorm()
+#         (post_attention_layernorm): LlamaRMSNorm()
+#       )
+#     )
+#     (norm): LlamaRMSNorm()
+#   )
+#   (lm_head): Linear(in_features=4096, out_features=32000, bias=False)
+
+
 config = LoraConfig(
     r=64,
     lora_alpha=32,
-    target_modules=["q_proj", "v_proj", "out_proj", "fc1", "fc2"],
+    target_modules=["q_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     lora_dropout=0.01,
     bias="none",
     task_type="CAUSAL_LM",
@@ -178,6 +225,7 @@ You can also directly load adapters from the Hub using the commands below:
 # You can then directly use the trained model or the model that you have loaded from the 🤗 Hub for inference as you would do it usually in `transformers`.
 # """
 #
+print("After fine-tuning: ")
 batch = tokenizer("Two things are infinite: ", return_tensors="pt")
 
 model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
