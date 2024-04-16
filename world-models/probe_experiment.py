@@ -283,7 +283,7 @@ def main_probe_experiment(args):
         results["probe_directions"][layer] = probe_direction
         results["probe_biases"][layer] = probe.intercept_
         results["probe_alphas"][layer] = probe_alphas
-
+    import pdb;pdb.set_trace()
     save_probe_results(args, results, args.prompt_name)
 
 
@@ -354,7 +354,7 @@ def pca_probe_experiment(args):
         results["probe_directions"][pca_dim] = probe_direction
         results["probe_biases"][pca_dim] = probe.intercept_
         results["probe_alphas"][pca_dim] = probe_alphas
-
+    import pdb;pdb.set_trace()
     save_probe_results(args, results, args.prompt_name, pca=True)
 
 
